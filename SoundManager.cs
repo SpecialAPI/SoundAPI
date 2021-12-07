@@ -356,7 +356,7 @@ namespace SoundAPI
 
         private static uint ProcessEvent(string eventName, GameObject go, Func<string, GameObject, uint> orig)
         {
-            if(go != null)
+            if(go != null && !string.IsNullOrEmpty(eventName))
             {
                 CustomSwitchData data = GetCustomSwitchData(go, eventName);
                 if(data != null)
@@ -412,6 +412,10 @@ namespace SoundAPI
 
         private static CustomSwitchData GetCustomSwitchData(GameObject go, string eventName)
         {
+            if (string.IsNullOrEmpty(eventName))
+            {
+                return null;
+            }
             if(go != null && Switches.ContainsKey(go) && Switches[go] != null)
             {
                 foreach(CustomSwitchData data in CustomSwitchDatas)
