@@ -4,8 +4,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using System.Reflection;
 using System.IO;
-using Ionic.Zip;
 using System.Runtime.InteropServices;
+using BepInEx;
 
 namespace SoundAPI
 {
@@ -79,67 +79,22 @@ namespace SoundAPI
         /// </summary>
         /// <param name="mod">The mod's <see cref="ETGModule"/>.</param>
         /// <param name="fileName">The name of the bank file. Doesn't need to include the .bnk at the end.</param>
-        public static void LoadBankFromModFolderOrZip(this ETGModule mod, string fileName)
+        public static void LoadBankFromModFolderOrZip(this BaseUnityPlugin mod, string fileName)
         {
             if (!fileName.EndsWith(".bnk"))
             {
                 fileName += ".bnk";
             }
-            int FilesLoaded = 0;
-            if (File.Exists(mod.Metadata.Archive))
-            {
-                ZipFile ModZIP = ZipFile.Read(mod.Metadata.Archive);
-                if (ModZIP != null && ModZIP.Entries.Count > 0)
-                {
-                    foreach (ZipEntry entry in ModZIP.Entries)
-                    {
-                        if (entry.FileName == fileName)
-                        {
-                            using (MemoryStream ms = new MemoryStream())
-                            {
-                                entry.Extract(ms);
-                                ms.Seek(0, SeekOrigin.Begin);
-                                LoadSoundbankFromStream(ms, entry.FileName);
-                                FilesLoaded++;
-                                break;
-                            }
-                        }
-                    }
-                    if (FilesLoaded > 0) { return; }
-                }
-            }
-            LoadFromPath(mod.Metadata.Directory, fileName);
+            LoadFromPath(mod.FolderPath(), fileName);
         }
 
         /// <summary>
         /// Loads all soundbanks from the mod's folder/zip.
         /// </summary>
         /// <param name="mod">The mod's <see cref="ETGModule"/>.</param>
-        public static void LoadBanksFromModFolderOrZip(this ETGModule mod)
+        public static void LoadBanksFromModFolderOrZip(this BaseUnityPlugin mod)
         {
-            int FilesLoaded = 0;
-            if (File.Exists(mod.Metadata.Archive))
-            {
-                ZipFile ModZIP = ZipFile.Read(mod.Metadata.Archive);
-                if (ModZIP != null && ModZIP.Entries.Count > 0)
-                {
-                    foreach (ZipEntry entry in ModZIP.Entries)
-                    {
-                        if (entry.FileName.EndsWith(".bnk"))
-                        {
-                            using (MemoryStream ms = new MemoryStream())
-                            {
-                                entry.Extract(ms);
-                                ms.Seek(0, SeekOrigin.Begin);
-                                LoadSoundbankFromStream(ms, entry.FileName);
-                                FilesLoaded++;
-                            }
-                        }
-                    }
-                    if (FilesLoaded > 0) { return; }
-                }
-            }
-            AutoloadFromPath(mod.Metadata.Directory);
+            AutoloadFromPath(mod.FolderPath());
         }
 
         /// <summary>
@@ -356,77 +311,114 @@ namespace SoundAPI
 
         private static uint ProcessEvent(string eventName, GameObject go, Func<string, GameObject, uint> orig)
         {
-            if(go != null && !string.IsNullOrEmpty(eventName))
+            try
             {
-                CustomSwitchData data = GetCustomSwitchData(go, eventName);
-                if(data != null)
+                if (go != null && !string.IsNullOrEmpty(eventName))
                 {
-                    Func<SwitchedEvent, GameObject, uint> playData = delegate (SwitchedEvent switched, GameObject go2)
+                    CustomSwitchData data = GetCustomSwitchData(go, eventName);
+                    if (data != null)
                     {
-                        bool returnValue = false;
-                        if(switched.switchGroup != null && switched.switchValue != null)
+                        Func<SwitchedEvent, GameObject, uint> playData = (SwitchedEvent switched, GameObject go2) =>
                         {
-                            SetSwitchOrig(switched.switchGroup, switched.switchValue, go2);
-                            returnValue = true;
-                        }
-                        uint u = orig(switched.eventName, go2);
-                        if (returnValue)
+                            if (!string.IsNullOrEmpty(switched.eventName))
+                            {
+                                bool returnValue = false;
+                                if (!string.IsNullOrEmpty(switched.switchGroup) && switched.switchValue != null)
+                                {
+                                    SetSwitchOrig(switched.switchGroup, switched.switchValue, go2);
+                                    returnValue = true;
+                                }
+                                uint u = orig(switched.eventName, go2);
+                                if (returnValue)
+                                {
+                                    ReturnSwitch(switched.switchGroup, go2);
+                                }
+                                return u;
+                            }
+                            return 0u;
+                        };
+                        return data.Play(go, playData);
+                    }
+                    if (eventName.ToLowerInvariant() == "stop_snd_all")
+                    {
+                        foreach (string stop in StopEvents)
                         {
-                            ReturnSwitch(switched.switchGroup, go2);
+                            if (!string.IsNullOrEmpty(stop))
+                            {
+                                orig(stop, go);
+                            }
                         }
-                        return u;
-                    };
-                    return data.Play(go, playData);
-                }
-                if(eventName.ToLower() == "stop_snd_all")
-                {
-                    foreach(string stop in StopEvents)
+                    }
+                    if (eventName.ToLowerInvariant() == "stop_mus_all")
                     {
-                        orig(stop, go);
+                        foreach (string stop in StopEventsMusic)
+                        {
+                            if (!string.IsNullOrEmpty(stop))
+                            {
+                                orig(stop, go);
+                            }
+                        }
+                    }
+                    if (eventName.ToLowerInvariant() == "stop_wpn_all")
+                    {
+                        foreach (string stop in StopEventsWeapons)
+                        {
+                            if (!string.IsNullOrEmpty(stop))
+                            {
+                                orig(stop, go);
+                            }
+                        }
+                    }
+                    if (eventName.ToLowerInvariant() == "stop_snd_obj")
+                    {
+                        foreach (string stop in StopEventsObjects)
+                        {
+                            if (!string.IsNullOrEmpty(stop))
+                            {
+                                orig(stop, go);
+                            }
+                        }
                     }
                 }
-                if (eventName.ToLower() == "stop_mus_all")
+                if (eventName == null)
                 {
-                    foreach (string stop in StopEventsMusic)
-                    {
-                        orig(stop, go);
-                    }
+                    return 0u;
                 }
-                if (eventName.ToLower() == "stop_wpn_all")
-                {
-                    foreach (string stop in StopEventsWeapons)
-                    {
-                        orig(stop, go);
-                    }
-                }
-                if (eventName.ToLower() == "stop_snd_obj")
-                {
-                    foreach (string stop in StopEventsObjects)
-                    {
-                        orig(stop, go);
-                    }
-                }
+                return orig(eventName, go);
             }
-            return orig(eventName, go);
+            catch
+            {
+                return 0u;
+            }
         }
 
         private static CustomSwitchData GetCustomSwitchData(GameObject go, string eventName)
         {
-            if (string.IsNullOrEmpty(eventName))
+            try
+            {
+                if (string.IsNullOrEmpty(eventName))
+                {
+                    return null;
+                }
+                if (go != null && Switches.ContainsKey(go) && Switches[go] != null)
+                {
+                    foreach (CustomSwitchData data in CustomSwitchDatas)
+                    {
+                        if (
+                            !string.IsNullOrEmpty(data.OriginalEventName) && data.OriginalEventName.ToLowerInvariant() == eventName.ToLowerInvariant() &&
+                            !string.IsNullOrEmpty(data.SwitchGroup) && Switches != null && Switches.ContainsKey(go) && Switches[go].ContainsKey(data.SwitchGroup.ToLowerInvariant()) &&
+                            !string.IsNullOrEmpty(data.RequiredSwitch) && Switches[go][data.SwitchGroup.ToLowerInvariant()] == data.RequiredSwitch.ToLowerInvariant())
+                        {
+                            return data;
+                        }
+                    }
+                }
+                return null;
+            }
+            catch
             {
                 return null;
             }
-            if(go != null && Switches.ContainsKey(go) && Switches[go] != null)
-            {
-                foreach(CustomSwitchData data in CustomSwitchDatas)
-                {
-                    if(data.OriginalEventName.ToLower() == eventName.ToLower() && Switches[go].ContainsKey(data.SwitchGroup.ToLower()) && Switches[go][data.SwitchGroup.ToLower()] == data.RequiredSwitch.ToLower())
-                    {
-                        return data;
-                    }
-                }
-            }
-            return null;
         }
 
         private delegate TResult Func<T1, T2, T3, T4, T5, TResult>(T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5);
@@ -436,7 +428,7 @@ namespace SoundAPI
 
         private static AKRESULT SetSwitch(Func<string, string, GameObject, AKRESULT> orig, string switchGroup, string switchValue, GameObject gameObject)
         {
-            if(gameObject != null && !origSetSwitch)
+            if(gameObject != null && Switches != null && !origSetSwitch)
             {
                 if (!Switches.ContainsKey(gameObject))
                 {
@@ -473,7 +465,7 @@ namespace SoundAPI
 
         private static void ReturnSwitch(string switchGroup, GameObject go)
         {
-            if(Switches.ContainsKey(go) && Switches[go] != null && Switches[go].ContainsKey(switchGroup))
+            if(Switches != null && Switches.ContainsKey(go) && Switches[go] != null && Switches[go].ContainsKey(switchGroup))
             {
                 origSetSwitch = true;
                 AkSoundEngine.SetSwitch(switchGroup, Switches[go][switchGroup], go);
